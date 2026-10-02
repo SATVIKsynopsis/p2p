@@ -71,6 +71,7 @@ impl Downloader {
                 hash,
             } => {
                 self.receive_piece(piece_index, data, hash).await?;
+                connection.send_have(piece_index).await?;
                 Ok(())
             }
 
@@ -175,7 +176,14 @@ pub async fn download_concurrently(
             let mut connection = connection;
 
             loop {
-                match downloader.try_download_from_peer(&mut connection).await {
+                if downloader.is_complete().await {
+                    break;
+                }
+
+                match downloader
+                    .try_download_from_peer(&mut connection)
+                    .await
+                {
                     Ok(true) => {}
 
                     Ok(false) => {
@@ -206,6 +214,13 @@ pub async fn download_concurrently(
         })?;
     }
 
+    if !self.is_complete().await {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "Download incomplete: some pieces are still missing",
+        ));
+    }
+
     Ok(())
 }
 
@@ -226,6 +241,27 @@ pub async fn try_download_from_peer(
             Ok(false)
         }
     }
+}
+
+pub async fn is_complete(&self) -> bool {
+    let piece_manager = self.piece_manager.lock().await;
+
+    for index in 0..piece_manager.total_pieces() {
+        if !piece_manager.has_piece(index as u32) {
+            return false;
+        }
+    }
+
+    true
+}
+
+pub async fn reassemble(
+    &self,
+    output_path: &str,
+) -> Result<(), std::io::Error> {
+    let piece_manager = self.piece_manager.lock().await;
+
+    piece_manager.reassemble(output_path)
 }
 
 }

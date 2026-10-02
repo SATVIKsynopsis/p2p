@@ -12,7 +12,7 @@ pub async fn start_server(address: &str) -> Result<(), std::io::Error> {
         println!("New connection from {}", addr);
 
         tokio::spawn(async move {
-            // Connection handling will be added later
+            // handeled later
             let _socket = socket;
         });
     }

@@ -1,5 +1,6 @@
 use sha2::{Digest, Sha256};
 
+#[derive(Clone)]
 pub struct Piece {
     pub index: u32,
     pub data: Vec<u8>,
@@ -12,7 +13,6 @@ pub fn new_piece(index: u32, data: Vec<u8>) -> Piece {
     hasher.update(&data);
 
     let hash: [u8; 32] = hasher.finalize().into();
-    
 
     Piece {
         index,
