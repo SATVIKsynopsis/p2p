@@ -39,11 +39,19 @@ pub async fn receive_bitfield(
             Ok(())
         }
 
-        _ => Err(std::io::Error::new(
+         other => {
+            println!(
+                "Expected Bitfield from {}, received: {:?}",
+                self.peer_id,
+                other
+            );
+
+        Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             "Expected Bitfield message",
-        )),
+        ))
     }
+}
 }
 
 pub fn has_remote_piece(

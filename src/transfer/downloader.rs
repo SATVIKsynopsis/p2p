@@ -55,32 +55,45 @@ impl Downloader {
         piece_manager.add_piece(piece)
     }
 
-    pub async fn download_from_peer(
-        &self,
-        connection: &mut PeerConnection,
-        piece_index: u32,
-    ) -> Result<(), std::io::Error> {
-        self.request_piece(connection, piece_index).await?;
+   pub async fn download_from_peer(
+    &self,
+    connection: &mut PeerConnection,
+    piece_index: u32,
+) -> Result<(), std::io::Error> {
+    println!(
+        "Downloader requesting piece {} from peer {}",
+        piece_index,
+        connection.peer_id
+    );
 
-        let message = connection.receive_message().await?;
+    self.request_piece(connection, piece_index).await?;
 
-        match message {
-            Message::Piece {
+    let message = connection.receive_message().await?;
+
+    match message {
+        Message::Piece {
+            piece_index,
+            data,
+            hash,
+        } => {
+            println!(
+                "Downloader received piece {} from peer {}",
                 piece_index,
-                data,
-                hash,
-            } => {
-                self.receive_piece(piece_index, data, hash).await?;
-                connection.send_have(piece_index).await?;
-                Ok(())
-            }
+                connection.peer_id
+            );
 
-            _ => Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Expected Piece message",
-            )),
+            self.receive_piece(piece_index, data, hash).await?;
+            connection.send_have(piece_index).await?;
+
+            Ok(())
         }
+
+        _ => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Expected Piece message",
+        )),
     }
+}
 
     pub async fn download_next_piece(
     &self,
@@ -88,7 +101,7 @@ impl Downloader {
 ) -> Result<bool, std::io::Error> {
     let piece_index = {
         let piece_manager = self.piece_manager.lock().await;
-        let downloading = self.downloading.lock().await;
+        let mut downloading = self.downloading.lock().await;
 
         let mut selected_piece = None;
 
@@ -96,29 +109,45 @@ impl Downloader {
             let piece_index = index as u32;
 
             if !piece_manager.has_piece(piece_index)
-                && !downloading.contains(&piece_index)
-                && connection.has_remote_piece(piece_index)
-            {
-                selected_piece = Some(piece_index);
-                break;
-            }
+    && !downloading.contains(&piece_index)
+{
+    println!(
+        "Piece {} available locally? {} | downloading? {} | remote has piece? {} | peer={}",
+        piece_index,
+        piece_manager.has_piece(piece_index),
+        downloading.contains(&piece_index),
+        connection.has_remote_piece(piece_index),
+        connection.peer_id
+    );
+
+    if connection.has_remote_piece(piece_index) {
+        selected_piece = Some(piece_index);
+        break;
+    }
+}
         }
 
         match selected_piece {
-            Some(index) => index,
+            Some(index) => {
+                // Reserve the piece BEFORE releasing the locks.
+                downloading.insert(index);
+                println!(
+    "Downloader selected piece {} from peer {}",
+    index,
+    connection.peer_id
+);
+                index
+            }
+
             None => return Ok(false),
         }
     };
-
-    {
-        let mut downloading = self.downloading.lock().await;
-        downloading.insert(piece_index);
-    }
 
     let result = self
         .download_from_peer(connection, piece_index)
         .await;
 
+    // Always release the reservation after the transfer finishes.
     {
         let mut downloading = self.downloading.lock().await;
         downloading.remove(&piece_index);

@@ -184,28 +184,174 @@ pub async fn connect_to_discovered_peers(
     let mut connections = Vec::new();
 
     for (peer_id, address) in peers {
-    if peer_id == self.peer_id {
+        if peer_id == self.peer_id {
+            continue;
+        }
+
+        println!(
+    "Attempting TCP connection to discovered peer {} at {}",
+    peer_id,
+    address
+);
+
+        match crate::network::tcp_client::connect_to_peer(&address).await {
+            Ok(stream) => {
+                let mut connection =
+                    PeerConnection::new(
+                        peer_id,
+                        stream,
+                    );
+
+                if let Err(error) =
+                    connection.receive_bitfield().await
+                {
+                    eprintln!(
+                        "Failed to receive bitfield from {}: {}",
+                        connection.peer_id,
+                        error
+                    );
+
+                    continue;
+                }
+
+                println!(
+    "Discovered peer {} has bitfield: {:?}",
+    connection.peer_id,
+    connection.bitfield
+);
+
+                connections.push(connection);
+            }
+
+            Err(error) => {
+                eprintln!(
+                    "Failed to connect to {}: {}",
+                    address,
+                    error
+                );
+            }
+        }
+    }
+
+    Ok(connections)
+}
+
+pub async fn discover_connections_for_missing_pieces(
+    &self,
+    dht_address: &str,
+    piece_manager: &PieceManager,
+) -> Result<Vec<PeerConnection>, std::io::Error> {
+    let mut connections = Vec::new();
+    let mut discovered_peer_ids = std::collections::HashSet::new();
+
+    for index in 0..piece_manager.total_pieces() {
+        let piece_index = index as u32;
+
+        if piece_manager.has_piece(piece_index) {
+            continue;
+        }
+
+        let peers =
+            crate::dht::discover_peers_for_piece(
+                dht_address,
+                piece_index,
+            )
+            .await?;
+
+        println!(
+    "DHT discovered peers for piece {}: {:?}",
+    piece_index,
+    peers
+);
+
+        for (peer_id, address) in peers {
+            if peer_id == self.peer_id {
+                continue;
+            }
+
+            if !discovered_peer_ids.insert(peer_id.clone()) {
+                continue;
+            }
+
+            match crate::network::tcp_client::connect_to_peer(&address).await {
+               Ok(stream) => {
+    println!(
+        "Connected to discovered peer {} at {}",
+        peer_id,
+        address
+    );
+
+    let mut connection = PeerConnection::new(
+        peer_id,
+        stream,
+    );
+
+    if let Err(error) = connection.receive_bitfield().await {
+        eprintln!(
+            "Failed to receive bitfield from {}: {}",
+            connection.peer_id,
+            error
+        );
         continue;
     }
 
-    match crate::network::tcp_client::connect_to_peer(&address).await {
-        Ok(stream) => {
-            connections.push(
-                PeerConnection::new(peer_id, stream)
-            );
-        }
+    println!(
+        "Discovered peer {} has bitfield: {:?}",
+        connection.peer_id,
+        connection.bitfield
+    );
 
-        Err(error) => {
-            eprintln!(
-                "Failed to connect to {}: {}",
-                address,
-                error
-            );
-        }
-    }
+    connections.push(connection);
 }
 
+                Err(error) => {
+                    eprintln!(
+                        "Failed to connect to {}: {}",
+                        address,
+                        error
+                    );
+                }
+            }
+        }
+    }
+
     Ok(connections)
+}
+
+pub async fn download_from_dht(
+    &self,
+    dht_address: &str,
+    piece_manager: PieceManager,
+) -> Result<(), std::io::Error> {
+    let connections =
+        self.discover_connections_for_missing_pieces(
+            dht_address,
+            &piece_manager,
+        )
+        .await?;
+
+    println!(
+    "DHT downloader discovered {} TCP connections",
+    connections.len()
+);
+
+    if connections.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "DHT found no peers for missing pieces",
+        ));
+    }
+
+    let downloader =
+        std::sync::Arc::new(
+            crate::transfer::Downloader::new(
+                piece_manager,
+            )
+        );
+
+    downloader
+        .download_concurrently(connections)
+        .await
 }
 
 }
