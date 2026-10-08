@@ -1,7 +1,7 @@
+use crate::integrity::hash::verify_hash;
 use crate::peer::PeerConnection;
 use crate::piece::PieceManager;
 use crate::protocol::Message;
-use crate::integrity::hash::verify_hash;
 
 pub struct Uploader {
     pub piece_manager: PieceManager,
@@ -9,9 +9,7 @@ pub struct Uploader {
 
 impl Uploader {
     pub fn new(piece_manager: PieceManager) -> Uploader {
-        Uploader {
-            piece_manager,
-        }
+        Uploader { piece_manager }
     }
 
     pub async fn serve_request(
@@ -37,20 +35,18 @@ impl Uploader {
     }
 
     pub async fn handle_request(
-    &self,
-    connection: &mut PeerConnection,
-) -> Result<(), std::io::Error> {
-    let message = connection.receive_message().await?;
+        &self,
+        connection: &mut PeerConnection,
+    ) -> Result<(), std::io::Error> {
+        let message = connection.receive_message().await?;
 
-    match message {
-        Message::Request { piece_index } => {
-            self.serve_request(connection, piece_index).await
+        match message {
+            Message::Request { piece_index } => self.serve_request(connection, piece_index).await,
+
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Expected Request message",
+            )),
         }
-
-        _ => Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "Expected Request message",
-        )),
     }
-}
 }

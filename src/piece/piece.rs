@@ -8,21 +8,15 @@ pub struct Piece {
 }
 
 pub fn new_piece(index: u32, data: Vec<u8>) -> Piece {
-
     let mut hasher = Sha256::new();
     hasher.update(&data);
 
     let hash: [u8; 32] = hasher.finalize().into();
 
-    Piece {
-        index,
-        data,
-        hash,
-    }
+    Piece { index, data, hash }
 }
 
 pub fn piece_verify(piece: &Piece) -> bool {
-
     let mut verify_hash = Sha256::new();
     verify_hash.update(&piece.data);
 

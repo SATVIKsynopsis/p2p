@@ -1,5 +1,5 @@
 use crate::integrity::hash::verify_hash;
-use crate::piece::{new_piece, Piece};
+use crate::piece::{Piece, new_piece};
 use std::io::Write;
 
 pub struct PieceManager {
@@ -8,10 +8,7 @@ pub struct PieceManager {
 }
 
 impl PieceManager {
-    pub fn try_from_file(
-        path: &str,
-        piece_size: usize,
-    ) -> Result<PieceManager, std::io::Error> {
+    pub fn try_from_file(path: &str, piece_size: usize) -> Result<PieceManager, std::io::Error> {
         if piece_size == 0 {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -30,15 +27,12 @@ impl PieceManager {
 
         let mut pieces = Vec::new();
 
-for (index, data) in read_file.chunks(piece_size).enumerate() {
-    let piece = new_piece(index as u32, data.to_vec());
-    pieces.push(Some(piece));
-}
+        for (index, data) in read_file.chunks(piece_size).enumerate() {
+            let piece = new_piece(index as u32, data.to_vec());
+            pieces.push(Some(piece));
+        }
 
-        Ok(PieceManager {
-            pieces,
-            piece_size,
-        })
+        Ok(PieceManager { pieces, piece_size })
     }
 
     pub fn new_empty(
@@ -61,14 +55,11 @@ for (index, data) in read_file.chunks(piece_size).enumerate() {
 
         let mut pieces = Vec::with_capacity(total_pieces);
 
-for _ in 0..total_pieces {
-    pieces.push(None);
-}
+        for _ in 0..total_pieces {
+            pieces.push(None);
+        }
 
-        Ok(PieceManager {
-    pieces,
-    piece_size,
-})
+        Ok(PieceManager { pieces, piece_size })
     }
 
     pub fn get_piece(&self, index: u32) -> Option<&Piece> {
@@ -81,10 +72,7 @@ for _ in 0..total_pieces {
         self.get_piece(index).is_some()
     }
 
-    pub fn add_piece(
-        &mut self,
-        piece: Piece,
-    ) -> Result<(), std::io::Error> {
+    pub fn add_piece(&mut self, piece: Piece) -> Result<(), std::io::Error> {
         let index = piece.index as usize;
 
         if index >= self.pieces.len() {
@@ -117,10 +105,7 @@ for _ in 0..total_pieces {
         self.pieces.len()
     }
 
-    pub fn reassemble(
-        &self,
-        output_path: &str,
-    ) -> Result<(), std::io::Error> {
+    pub fn reassemble(&self, output_path: &str) -> Result<(), std::io::Error> {
         let mut output_file = std::fs::File::create(output_path)?;
 
         for (index, piece) in self.pieces.iter().enumerate() {
@@ -138,37 +123,33 @@ for _ in 0..total_pieces {
     }
 
     pub fn bitfield(&self) -> Vec<u8> {
-    let total_pieces = self.pieces.len();
-    let byte_count = (total_pieces + 7) / 8;
+        let total_pieces = self.pieces.len();
+        let byte_count = (total_pieces + 7) / 8;
 
-    let mut bitfield = vec![0u8; byte_count];
+        let mut bitfield = vec![0u8; byte_count];
 
-    for index in 0..total_pieces {
-        if self.pieces[index].is_some() {
-            let byte_index = index / 8;
-            let bit_index = index % 8;
+        for index in 0..total_pieces {
+            if self.pieces[index].is_some() {
+                let byte_index = index / 8;
+                let bit_index = index % 8;
 
-            bitfield[byte_index] |= 1 << bit_index;
+                bitfield[byte_index] |= 1 << bit_index;
+            }
         }
+
+        bitfield
     }
 
-    bitfield
-}
+    pub fn has_piece_from_bitfield(bitfield: &[u8], piece_index: u32) -> bool {
+        let index = piece_index as usize;
 
-pub fn has_piece_from_bitfield(
-    bitfield: &[u8],
-    piece_index: u32,
-) -> bool {
-    let index = piece_index as usize;
+        let byte_index = index / 8;
+        let bit_index = index % 8;
 
-    let byte_index = index / 8;
-    let bit_index = index % 8;
+        if byte_index >= bitfield.len() {
+            return false;
+        }
 
-    if byte_index >= bitfield.len() {
-        return false;
+        (bitfield[byte_index] & (1 << bit_index)) != 0
     }
-
-    (bitfield[byte_index] & (1 << bit_index)) != 0
-}
-
 }

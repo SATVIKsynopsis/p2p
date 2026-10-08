@@ -5,12 +5,8 @@ pub mod server;
 pub mod table;
 
 pub use client::{
-    announce_piece,
-    find_dht_peers,
-    join_dht,
+    announce_piece, announce_pieces, discover_peers_for_piece, find_dht_peers, join_dht,
     send_dht_message,
-    announce_pieces,
-    discover_peers_for_piece,
 };
 
 pub use message::DhtMessage;

@@ -4,28 +4,16 @@ use p2p::dht::{DhtNode, DhtTable};
 fn test_dht_store_and_find() {
     let mut table = DhtTable::new();
 
-    let peer_a = DhtNode::new(
-        "peer_a".to_string(),
-        "127.0.0.1:7001".to_string(),
-    );
+    let peer_a = DhtNode::new("peer_a".to_string(), "127.0.0.1:7001".to_string());
 
-    let peer_b = DhtNode::new(
-        "peer_b".to_string(),
-        "127.0.0.1:7002".to_string(),
-    );
+    let peer_b = DhtNode::new("peer_b".to_string(), "127.0.0.1:7002".to_string());
 
     table.add_node(peer_a);
     table.add_node(peer_b);
 
-    table.store(
-        "piece_1".to_string(),
-        "peer_a".to_string(),
-    );
+    table.store("piece_1".to_string(), "peer_a".to_string());
 
-    table.store(
-        "piece_1".to_string(),
-        "peer_b".to_string(),
-    );
+    table.store("piece_1".to_string(), "peer_b".to_string());
 
     let peers = table.find("piece_1");
 
@@ -38,20 +26,11 @@ fn test_dht_store_and_find() {
 fn test_dht_remove_record() {
     let mut table = DhtTable::new();
 
-    table.store(
-        "piece_1".to_string(),
-        "peer_a".to_string(),
-    );
+    table.store("piece_1".to_string(), "peer_a".to_string());
 
-    table.store(
-        "piece_1".to_string(),
-        "peer_b".to_string(),
-    );
+    table.store("piece_1".to_string(), "peer_b".to_string());
 
-    table.remove_record(
-        "piece_1",
-        "peer_a",
-    );
+    table.remove_record("piece_1", "peer_a");
 
     let peers = table.find("piece_1");
 

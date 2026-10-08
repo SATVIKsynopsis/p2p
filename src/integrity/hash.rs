@@ -10,4 +10,3 @@ pub fn verify_hash(data: &[u8], hash: &[u8; 32]) -> bool {
     let calculated_hash = calculate_hash(data);
     &calculated_hash == hash
 }
-

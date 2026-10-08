@@ -2,7 +2,7 @@ use std::fs;
 use std::sync::Arc;
 
 use p2p::peer::PeerConnection;
-use p2p::piece::{new_piece, PieceManager};
+use p2p::piece::{PieceManager, new_piece};
 use p2p::protocol::Message;
 use p2p::transfer::{Downloader, Uploader};
 use tokio::net::TcpListener;
@@ -28,8 +28,7 @@ async fn start_seeder(
             .await
             .expect("Failed to accept connection");
 
-        let mut connection =
-            PeerConnection::new(peer_id.to_string(), stream);
+        let mut connection = PeerConnection::new(peer_id.to_string(), stream);
 
         let uploader = Uploader::new(piece_manager);
 
@@ -69,8 +68,7 @@ fn create_manager(
     piece_size: usize,
 ) -> PieceManager {
     let mut manager =
-        PieceManager::new_empty(total_pieces, piece_size)
-            .expect("Failed to create PieceManager");
+        PieceManager::new_empty(total_pieces, piece_size).expect("Failed to create PieceManager");
 
     for &index in indexes {
         manager
@@ -83,17 +81,14 @@ fn create_manager(
 
 #[tokio::test]
 async fn test_peer_dropout_recovery() {
-    let original_data =
-        b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+    let original_data = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
     let piece_size = 10;
 
     let pieces: Vec<_> = original_data
         .chunks(piece_size)
         .enumerate()
-        .map(|(index, data)| {
-            new_piece(index as u32, data.to_vec())
-        })
+        .map(|(index, data)| new_piece(index as u32, data.to_vec()))
         .collect();
 
     let total_pieces = pieces.len();
@@ -105,84 +100,39 @@ async fn test_peer_dropout_recovery() {
         and can therefore recover the missing pieces.
     */
 
-    let failing_manager =
-        create_manager(
-            &pieces,
-            &[0, 1],
-            total_pieces,
-            piece_size,
-        );
+    let failing_manager = create_manager(&pieces, &[0, 1], total_pieces, piece_size);
 
-    let healthy_manager =
-        create_manager(
-            &pieces,
-            &[0, 1, 2, 3, 4, 5, 6],
-            total_pieces,
-            piece_size,
-        );
+    let healthy_manager = create_manager(&pieces, &[0, 1, 2, 3, 4, 5, 6], total_pieces, piece_size);
 
     let (failing_address, failing_task) =
-    start_seeder(
-        "failing_peer",
-        failing_manager,
-        1,
-        true,
-    )
-    .await;
+        start_seeder("failing_peer", failing_manager, 1, true).await;
 
     let (healthy_address, healthy_task) =
-    start_seeder(
-        "healthy_peer",
-        healthy_manager,
+        start_seeder("healthy_peer", healthy_manager, total_pieces, false).await;
+
+    let failing_stream = tokio::net::TcpStream::connect(&failing_address)
+        .await
+        .expect("Failed to connect to failing peer");
+
+    let healthy_stream = tokio::net::TcpStream::connect(&healthy_address)
+        .await
+        .expect("Failed to connect to healthy peer");
+
+    let mut failing_connection = PeerConnection::new("failing_peer".to_string(), failing_stream);
+
+    let mut healthy_connection = PeerConnection::new("healthy_peer".to_string(), healthy_stream);
+
+    failing_connection.bitfield = Some(failing_connection_bitfield(total_pieces, &[0, 1]));
+
+    healthy_connection.bitfield = Some(failing_connection_bitfield(
         total_pieces,
-        false,
-    )
-    .await;
+        &[0, 1, 2, 3, 4, 5, 6],
+    ));
 
-    let failing_stream =
-        tokio::net::TcpStream::connect(&failing_address)
-            .await
-            .expect("Failed to connect to failing peer");
-
-    let healthy_stream =
-        tokio::net::TcpStream::connect(&healthy_address)
-            .await
-            .expect("Failed to connect to healthy peer");
-
-    let mut failing_connection =
-        PeerConnection::new(
-            "failing_peer".to_string(),
-            failing_stream,
-        );
-
-    let mut healthy_connection =
-        PeerConnection::new(
-            "healthy_peer".to_string(),
-            healthy_stream,
-        );
-
-    // Tell the downloader what each peer claims to have.
-    failing_connection.bitfield =
-        Some(failing_connection_bitfield(
-            total_pieces,
-            &[0, 1],
-        ));
-
-    healthy_connection.bitfield =
-        Some(failing_connection_bitfield(
-            total_pieces,
-            &[0, 1, 2, 3, 4, 5, 6],
-        ));
-
-    let downloader_manager =
-        PieceManager::new_empty(
-            total_pieces,
-            piece_size,
-        )
+    let downloader_manager = PieceManager::new_empty(total_pieces, piece_size)
         .expect("Failed to create downloader manager");
 
-    let downloader =
-        Arc::new(Downloader::new(downloader_manager));
+    let downloader = Arc::new(Downloader::new(downloader_manager));
 
     /*
         First peer fails.
@@ -229,32 +179,21 @@ async fn test_peer_dropout_recovery() {
         .await
         .expect("Failed to reassemble file");
 
-    let reconstructed =
-        fs::read(output_path)
-            .expect("Failed to read reconstructed file");
+    let reconstructed = fs::read(output_path).expect("Failed to read reconstructed file");
 
     assert_eq!(
-        reconstructed,
-        original_data,
+        reconstructed, original_data,
         "Recovered file differs from original"
     );
 
-    fs::remove_file(output_path)
-        .expect("Failed to remove test output");
+    fs::remove_file(output_path).expect("Failed to remove test output");
 
-    failing_task
-        .await
-        .expect("Failing peer task failed");
+    failing_task.await.expect("Failing peer task failed");
 
-    healthy_task
-        .await
-        .expect("Healthy peer task failed");
+    healthy_task.await.expect("Healthy peer task failed");
 }
 
-fn failing_connection_bitfield(
-    total_pieces: usize,
-    indexes: &[usize],
-) -> Vec<u8> {
+fn failing_connection_bitfield(total_pieces: usize, indexes: &[usize]) -> Vec<u8> {
     let byte_count = (total_pieces + 7) / 8;
 
     let mut bitfield = vec![0u8; byte_count];

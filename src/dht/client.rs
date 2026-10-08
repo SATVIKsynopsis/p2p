@@ -8,33 +8,16 @@ pub async fn discover_peers_for_piece(
 ) -> Result<Vec<(String, String)>, std::io::Error> {
     let key = format!("piece_{}", piece_index);
 
-    find_dht_peers(
-        dht_address,
-        &key,
-    )
-    .await
+    find_dht_peers(dht_address, &key).await
 }
 
-pub async fn send_dht_message(
-    address: &str,
-    message: &DhtMessage,
-) -> Result<(), std::io::Error> {
+pub async fn send_dht_message(address: &str, message: &DhtMessage) -> Result<(), std::io::Error> {
     let mut stream = TcpStream::connect(address).await?;
 
-    let encoded_message =
-        bincode::serde::encode_to_vec(
-            message,
-            bincode::config::standard(),
-        )
-        .map_err(|error| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                error,
-            )
-        })?;
+    let encoded_message = bincode::serde::encode_to_vec(message, bincode::config::standard())
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
 
-    let length_prefix =
-        (encoded_message.len() as u32).to_be_bytes();
+    let length_prefix = (encoded_message.len() as u32).to_be_bytes();
 
     stream.write_all(&length_prefix).await?;
     stream.write_all(&encoded_message).await?;
@@ -52,20 +35,10 @@ pub async fn find_dht_peers(
         key: key.to_string(),
     };
 
-    let encoded_message =
-        bincode::serde::encode_to_vec(
-            &message,
-            bincode::config::standard(),
-        )
-        .map_err(|error| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                error,
-            )
-        })?;
+    let encoded_message = bincode::serde::encode_to_vec(&message, bincode::config::standard())
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
 
-    let length_prefix =
-        (encoded_message.len() as u32).to_be_bytes();
+    let length_prefix = (encoded_message.len() as u32).to_be_bytes();
 
     stream.write_all(&length_prefix).await?;
     stream.write_all(&encoded_message).await?;
@@ -74,24 +47,14 @@ pub async fn find_dht_peers(
 
     stream.read_exact(&mut response_length).await?;
 
-    let length =
-        u32::from_be_bytes(response_length) as usize;
+    let length = u32::from_be_bytes(response_length) as usize;
 
     let mut payload = vec![0u8; length];
 
     stream.read_exact(&mut payload).await?;
 
-    let (response, _) =
-        bincode::serde::decode_from_slice(
-            &payload,
-            bincode::config::standard(),
-        )
-        .map_err(|error| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                error,
-            )
-        })?;
+    let (response, _) = bincode::serde::decode_from_slice(&payload, bincode::config::standard())
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
 
     match response {
         DhtMessage::Found { nodes, .. } => Ok(nodes),
@@ -141,13 +104,7 @@ pub async fn announce_pieces(
         let piece_index = index as u32;
 
         if piece_manager.has_piece(piece_index) {
-            announce_piece(
-                dht_address,
-                piece_index,
-                node_id,
-                node_address,
-            )
-            .await?;
+            announce_piece(dht_address, piece_index, node_id, node_address).await?;
         }
     }
 
