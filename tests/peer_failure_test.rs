@@ -93,12 +93,7 @@ async fn test_peer_dropout_recovery() {
 
     let total_pieces = pieces.len();
 
-    /*
-        Peer A has pieces 0,1 but drops when requested.
-
-        Peer B has pieces 0,1,2,3,4,5,6
-        and can therefore recover the missing pieces.
-    */
+    
 
     let failing_manager = create_manager(&pieces, &[0, 1], total_pieces, piece_size);
 
@@ -134,20 +129,13 @@ async fn test_peer_dropout_recovery() {
 
     let downloader = Arc::new(Downloader::new(downloader_manager));
 
-    /*
-        First peer fails.
-
-        The failure should not kill the entire download.
-    */
+    
 
     let _ = downloader
         .try_download_from_peer(&mut failing_connection)
         .await;
 
-    /*
-        The healthy peer should now be able to
-        download all remaining pieces.
-    */
+    
 
     loop {
         if downloader.is_complete().await {
@@ -191,6 +179,77 @@ async fn test_peer_dropout_recovery() {
     failing_task.await.expect("Failing peer task failed");
 
     healthy_task.await.expect("Healthy peer task failed");
+}
+
+#[tokio::test]
+async fn test_three_peer_dropout_recovery_during_concurrent_transfer() {
+    let original =
+        b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQR";
+    let piece_size = 10;
+    let pieces: Vec<_> = original
+        .chunks(piece_size)
+        .enumerate()
+        .map(|(index, data)| new_piece(index as u32, data.to_vec()))
+        .collect();
+    let total = pieces.len();
+    assert_eq!(total, 8);
+
+    let (a_addr, a_task) = start_seeder(
+        "drop_a",
+        create_manager(&pieces, &[0, 1, 2], total, piece_size),
+        1,
+        true,
+    )
+    .await;
+    let (b_addr, b_task) = start_seeder(
+        "peer_b",
+        create_manager(&pieces, &[0, 1, 2, 3, 4, 5], total, piece_size),
+        6,
+        false,
+    )
+    .await;
+    let (c_addr, c_task) = start_seeder(
+        "peer_c",
+        create_manager(&pieces, &[6, 7], total, piece_size),
+        2,
+        false,
+    )
+    .await;
+
+    let mut a = PeerConnection::new(
+        "drop_a".into(),
+        tokio::net::TcpStream::connect(a_addr).await.unwrap(),
+    );
+    let mut b = PeerConnection::new(
+        "peer_b".into(),
+        tokio::net::TcpStream::connect(b_addr).await.unwrap(),
+    );
+    let mut c = PeerConnection::new(
+        "peer_c".into(),
+        tokio::net::TcpStream::connect(c_addr).await.unwrap(),
+    );
+    a.bitfield = Some(failing_connection_bitfield(total, &[0, 1, 2]));
+    b.bitfield = Some(failing_connection_bitfield(total, &[0, 1, 2, 3, 4, 5]));
+    c.bitfield = Some(failing_connection_bitfield(total, &[6, 7]));
+
+    let downloader = Arc::new(Downloader::new(
+        PieceManager::new_empty(total, piece_size).unwrap(),
+    ));
+    downloader
+        .clone()
+        .download_concurrently(vec![a, b, c])
+        .await
+        .unwrap();
+    let output_path = std::env::temp_dir().join(format!("p2p_failure_{}.bin", std::process::id()));
+    downloader
+        .reassemble(output_path.to_str().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(fs::read(&output_path).unwrap(), original);
+    fs::remove_file(output_path).unwrap();
+    a_task.await.unwrap();
+    b_task.await.unwrap();
+    c_task.await.unwrap();
 }
 
 fn failing_connection_bitfield(total_pieces: usize, indexes: &[usize]) -> Vec<u8> {

@@ -35,8 +35,7 @@ async fn start_seeder(piece_manager: PieceManager) -> (String, tokio::task::Join
                         .expect("Seeder failed to serve request");
                 }
 
-                Ok(_) => {
-                }
+                Ok(_) => {}
 
                 Err(_) => {
                     break;
@@ -82,11 +81,7 @@ async fn test_three_peer_concurrent_download() {
 
     assert_eq!(total_pieces, 7);
 
-    /*
-        Peer A owns: pieces 0, 1
-        Peer B owns: pieces 2, 3
-        Peer C owns: pieces 4, 5, 6
-    */
+    
 
     let peer_a_manager = create_piece_manager(&pieces, &[0, 1], total_pieces, piece_size);
 

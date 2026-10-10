@@ -19,17 +19,18 @@ async fn start_seeder(address: &str, uploader: Arc<Uploader>) {
             let uploader = Arc::clone(&uploader);
 
             tokio::spawn(async move {
-                let mut connection = p2p::peer::PeerConnection::new("seeder".to_string(), stream);
+                let mut connection = p2p::peer::PeerConnection::new("".to_string(), stream);
 
                 let bitfield = uploader.piece_manager.bitfield();
 
                 println!("Seeder sending bitfield: {:?}", bitfield);
 
-                if connection
-                    .send_message(&Message::Bitfield { bitfield })
-                    .await
-                    .is_err()
+                if connection.handshake("seeder").await.is_err()
+                    || connection.exchange_bitfield(bitfield).await.is_err()
                 {
+                    return;
+                }
+                if connection.send_message(&Message::Unchoke).await.is_err() {
                     return;
                 }
 

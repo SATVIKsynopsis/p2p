@@ -2,6 +2,7 @@ use crate::integrity::hash::verify_hash;
 use crate::piece::{Piece, new_piece};
 use std::io::Write;
 
+#[derive(Clone)]
 pub struct PieceManager {
     pub pieces: Vec<Option<Piece>>,
     pub piece_size: usize,

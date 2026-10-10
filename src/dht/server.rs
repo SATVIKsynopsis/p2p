@@ -1,4 +1,3 @@
-use crate::protocol::codec::{decode_message, encode_message};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
@@ -107,20 +106,6 @@ pub async fn start_dht_server(
             }
         });
     }
-}
-
-fn encode_dht_message(message: &DhtMessage) -> Result<Vec<u8>, std::io::Error> {
-    let encoded = bincode::serde::encode_to_vec(message, bincode::config::standard())
-        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-
-    let length = (encoded.len() as u32).to_be_bytes();
-
-    let mut frame = Vec::with_capacity(4 + encoded.len());
-
-    frame.extend_from_slice(&length);
-    frame.extend_from_slice(&encoded);
-
-    Ok(frame)
 }
 
 fn decode_dht_message(bytes: &[u8]) -> Result<DhtMessage, std::io::Error> {

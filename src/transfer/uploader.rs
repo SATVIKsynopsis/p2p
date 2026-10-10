@@ -1,4 +1,3 @@
-use crate::integrity::hash::verify_hash;
 use crate::peer::PeerConnection;
 use crate::piece::PieceManager;
 use crate::protocol::Message;
@@ -17,6 +16,12 @@ impl Uploader {
         connection: &mut PeerConnection,
         piece_index: u32,
     ) -> Result<(), std::io::Error> {
+        if !connection.locally_unchoked {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "Request rejected while peer is choked",
+            ));
+        }
         if let Some(piece) = self.piece_manager.get_piece(piece_index) {
             let message = Message::Piece {
                 piece_index: piece.index,
@@ -25,6 +30,7 @@ impl Uploader {
             };
 
             connection.send_message(&message).await?;
+            connection.uploaded_pieces += 1;
             Ok(())
         } else {
             Err(std::io::Error::new(

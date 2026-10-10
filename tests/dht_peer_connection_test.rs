@@ -1,9 +1,7 @@
 use p2p::dht::server::start_dht_server;
 use p2p::dht::{DhtTable, announce_piece};
-use p2p::network::tcp_server::start_server;
 use p2p::peer::Peer;
 use p2p::piece::PieceManager;
-use p2p::protocol::{Message, codec::write_message};
 use tokio::net::TcpListener;
 
 use std::sync::Arc;
@@ -26,39 +24,41 @@ async fn test_dht_discovery_and_peer_connection() {
     let peer_a_address = "127.0.0.1:7601";
 
     tokio::spawn(async move {
-    let listener = TcpListener::bind(peer_a_address).await.unwrap();
+        let listener = TcpListener::bind(peer_a_address).await.unwrap();
 
-    loop {
-        let (mut socket, _) = listener.accept().await.unwrap();
-
-        write_message(
-            &mut socket,
-            &Message::Bitfield {
-                bitfield: vec![0b0000_1000],
-            },
-        )
-        .await
-        .unwrap();
-    }
-});
+        loop {
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut connection = p2p::peer::PeerConnection::new(String::new(), socket);
+            connection.handshake("peer_a").await.unwrap();
+            connection
+                .exchange_bitfield(vec![0b0000_1000])
+                .await
+                .unwrap();
+            connection
+                .send_message(&p2p::protocol::Message::Unchoke)
+                .await
+                .unwrap();
+        }
+    });
     let peer_b_address = "127.0.0.1:7602";
 
-   tokio::spawn(async move {
-    let listener = TcpListener::bind(peer_b_address).await.unwrap();
+    tokio::spawn(async move {
+        let listener = TcpListener::bind(peer_b_address).await.unwrap();
 
-    loop {
-        let (mut socket, _) = listener.accept().await.unwrap();
-
-        write_message(
-            &mut socket,
-            &Message::Bitfield {
-                bitfield: vec![0b0000_1000],
-            },
-        )
-        .await
-        .unwrap();
-    }
-});
+        loop {
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut connection = p2p::peer::PeerConnection::new(String::new(), socket);
+            connection.handshake("peer_b").await.unwrap();
+            connection
+                .exchange_bitfield(vec![0b0000_1000])
+                .await
+                .unwrap();
+            connection
+                .send_message(&p2p::protocol::Message::Unchoke)
+                .await
+                .unwrap();
+        }
+    });
 
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 

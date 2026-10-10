@@ -4,18 +4,21 @@ use crate::protocol::Message;
 use std::collections::HashSet;
 
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, watch};
 
 pub struct Downloader {
     pub piece_manager: Arc<Mutex<PieceManager>>,
     pub downloading: Arc<Mutex<HashSet<u32>>>,
+    completion: watch::Sender<bool>,
 }
 
 impl Downloader {
     pub fn new(piece_manager: PieceManager) -> Downloader {
+        let (completion, _) = watch::channel(false);
         Downloader {
             piece_manager: Arc::new(Mutex::new(piece_manager)),
             downloading: Arc::new(Mutex::new(HashSet::new())),
+            completion,
         }
     }
 
@@ -24,6 +27,12 @@ impl Downloader {
         connection: &mut PeerConnection,
         piece_index: u32,
     ) -> Result<(), std::io::Error> {
+        if !connection.remote_unchoked {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "Remote peer is choking requests",
+            ));
+        }
         let message = Message::Request { piece_index };
 
         connection.send_message(&message).await
@@ -50,44 +59,89 @@ impl Downloader {
 
         let mut piece_manager = self.piece_manager.lock().await;
 
-        piece_manager.add_piece(piece)
+        piece_manager.add_piece(piece)?;
+        Ok(())
+    }
+
+    async fn update_remote_have(
+        &self,
+        connection: &mut PeerConnection,
+        piece_index: u32,
+    ) -> Result<(), std::io::Error> {
+        let total = self.piece_manager.lock().await.total_pieces();
+        if piece_index as usize >= total {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Have piece index out of range",
+            ));
+        }
+        connection.update_remote_piece(piece_index);
+        Ok(())
     }
 
     pub async fn download_from_peer(
         &self,
         connection: &mut PeerConnection,
-        piece_index: u32,
+        requested_piece_index: u32,
     ) -> Result<(), std::io::Error> {
         println!(
             "Downloader requesting piece {} from peer {}",
-            piece_index, connection.peer_id
+            requested_piece_index, connection.peer_id
         );
 
-        self.request_piece(connection, piece_index).await?;
+        self.request_piece(connection, requested_piece_index)
+            .await?;
 
-        let message = connection.receive_message().await?;
+        loop {
+            match connection.receive_message().await? {
+                Message::Piece {
+                    piece_index,
+                    data,
+                    hash,
+                } => {
+                    if piece_index != requested_piece_index {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "Received a different piece than requested",
+                        ));
+                    }
+                    println!(
+                        "Downloader received piece {} from peer {}",
+                        piece_index, connection.peer_id
+                    );
 
-        match message {
-            Message::Piece {
-                piece_index,
-                data,
-                hash,
-            } => {
-                println!(
-                    "Downloader received piece {} from peer {}",
-                    piece_index, connection.peer_id
-                );
+                    self.receive_piece(piece_index, data, hash).await?;
+                    connection.send_have(piece_index).await?;
+                    connection.downloaded_pieces += 1;
+                    connection.successful_requests += 1;
+                    if self.is_complete().await {
+                        self.completion.send_replace(true);
+                    }
 
-                self.receive_piece(piece_index, data, hash).await?;
-                connection.send_have(piece_index).await?;
-
-                Ok(())
+                    return Ok(());
+                }
+                Message::Have { piece_index } => {
+                    self.update_remote_have(connection, piece_index).await?
+                }
+                Message::Choke => {
+                    connection.remote_unchoked = false;
+                    let total = self.piece_manager.lock().await.total_pieces();
+                    connection.wait_until_unchoked(total).await?;
+                    self.request_piece(connection, requested_piece_index)
+                        .await?;
+                }
+                Message::Unchoke => {
+                    connection.remote_unchoked = true;
+                    self.request_piece(connection, requested_piece_index)
+                        .await?;
+                }
+                _ => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "Expected Piece, Have, Choke, or Unchoke message",
+                    ));
+                }
             }
-
-            _ => Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Expected Piece message",
-            )),
         }
     }
 
@@ -185,12 +239,13 @@ impl Downloader {
         self: std::sync::Arc<Self>,
         connections: Vec<PeerConnection>,
     ) -> Result<(), std::io::Error> {
-        let mut tasks = Vec::new();
+        let mut completed = self.completion.subscribe();
+        let mut tasks = tokio::task::JoinSet::new();
 
         for connection in connections {
             let downloader = std::sync::Arc::clone(&self);
 
-            let task = tokio::spawn(async move {
+            tasks.spawn(async move {
                 let mut connection = connection;
 
                 loop {
@@ -198,11 +253,66 @@ impl Downloader {
                         break;
                     }
 
+                    if !connection.remote_unchoked {
+                        match tokio::time::timeout(
+                            std::time::Duration::from_secs(30),
+                            connection.receive_message(),
+                        )
+                        .await
+                        {
+                            Ok(Ok(Message::Unchoke)) => connection.remote_unchoked = true,
+                            Ok(Ok(Message::Choke)) => connection.remote_unchoked = false,
+                            Ok(Ok(Message::Have { piece_index })) => {
+                                if downloader
+                                    .update_remote_have(&mut connection, piece_index)
+                                    .await
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                            Ok(Ok(Message::Ping)) => {
+                                if connection.send_message(&Message::Pong).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Ok(Ok(_)) | Ok(Err(_)) | Err(_) => break,
+                        }
+                        continue;
+                    }
+
                     match downloader.try_download_from_peer(&mut connection).await {
                         Ok(true) => {}
 
                         Ok(false) => {
-                            break;
+                            if downloader.is_complete().await {
+                                break;
+                            }
+                            match tokio::time::timeout(
+                                std::time::Duration::from_secs(5),
+                                connection.receive_message(),
+                            )
+                            .await
+                            {
+                                Ok(Ok(Message::Have { piece_index })) => {
+                                    if downloader
+                                        .update_remote_have(&mut connection, piece_index)
+                                        .await
+                                        .is_err()
+                                    {
+                                        break;
+                                    }
+                                }
+                                Ok(Ok(Message::Choke)) => connection.remote_unchoked = false,
+                                Ok(Ok(Message::Unchoke)) => connection.remote_unchoked = true,
+                                Ok(Ok(Message::Ping)) => {
+                                    if connection.send_message(&Message::Pong).await.is_err() {
+                                        break;
+                                    }
+                                }
+                                Ok(Ok(_)) => break,
+                                Ok(Err(_)) | Err(_) => break,
+                            }
                         }
 
                         Err(error) => {
@@ -212,18 +322,30 @@ impl Downloader {
                     }
                 }
             });
-
-            tasks.push(task);
         }
 
-        for task in tasks {
-            task.await.map_err(|error| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Download task failed: {}", error),
-                )
-            })?;
+        loop {
+            if *completed.borrow() {
+                tasks.abort_all();
+                break;
+            }
+            if tasks.is_empty() {
+                break;
+            }
+            tokio::select! {
+                joined = tasks.join_next() => {
+                    if let Some(Err(error)) = joined {
+                        if !error.is_cancelled() {
+                            return Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Download task failed: {error}")));
+                        }
+                    }
+                }
+                changed = completed.changed() => {
+                    if changed.is_err() { break; }
+                }
+            }
         }
+        while tasks.join_next().await.is_some() {}
 
         if !self.is_complete().await {
             return Err(std::io::Error::new(
