@@ -8,7 +8,6 @@ pub struct PeerConnection {
 
     pub remote_unchoked: bool,
     pub locally_unchoked: bool,
-    pub locally_unchoked: bool,
 
     pub uploaded_pieces: u64,
     pub downloaded_pieces: u64,

@@ -68,10 +68,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 manager.add_piece(complete.get_piece(index as u32).unwrap().clone())?;
             }
             let manager = Arc::new(manager);
-            let listener = TcpListener::bind(listen_addr).await?;
-            let actual_addr = listener.local_addr()?.to_string();
-            join_dht(dht_addr, peer_id, &actual_addr).await?;
-            if let Err(error) = announce_pieces(dht_addr, peer_id, &actual_addr, &manager).await {
+           let listener = TcpListener::bind(listen_addr).await?;
+let actual_addr = listener.local_addr()?.to_string();
+let peer_addr = args.get(8).map(String::as_str).unwrap_or(&actual_addr);
+
+join_dht(dht_addr, peer_id, peer_addr).await?;
+if let Err(error) = announce_pieces(dht_addr, peer_id, peer_addr, &manager).await {
                 let _ = remove_peer(dht_addr, peer_id).await;
                 return Err(error.into());
             }
@@ -87,7 +89,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
            
             let heartbeat_dht = dht_addr.clone();
             let heartbeat_peer = peer_id.clone();
-            let heartbeat_addr = actual_addr.clone();
+            let heartbeat_addr = peer_addr.to_owned();
             let heartbeat_manager = Arc::clone(&manager);
             let heartbeat = tokio::spawn(async move {
                 let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
