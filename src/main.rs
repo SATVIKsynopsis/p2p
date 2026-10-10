@@ -1,5 +1,5 @@
 use p2p::{
-    dht::{DhtTable, announce_pieces, server::start_dht_server},
+    dht::{DhtTable, announce_pieces, join_dht, remove_peer, server::start_dht_server},
     network::tcp_server::serve_peer,
     peer::Peer,
     piece::PieceManager,
@@ -70,7 +70,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let manager = Arc::new(manager);
             let listener = TcpListener::bind(listen_addr).await?;
             let actual_addr = listener.local_addr()?.to_string();
-            announce_pieces(dht_addr, peer_id, &actual_addr, &manager).await?;
+            join_dht(dht_addr, peer_id, &actual_addr).await?;
+            if let Err(error) = announce_pieces(dht_addr, peer_id, &actual_addr, &manager).await {
+                let _ = remove_peer(dht_addr, peer_id).await;
+                return Err(error.into());
+            }
             println!(
                 "Peer {peer_id} seeding {} of {} pieces at {actual_addr}",
                 manager
@@ -80,7 +84,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .sum::<usize>(),
                 manager.total_pieces(),
             );
-            serve_peer(listener, peer_id.clone(), manager).await?;
+           
+            let heartbeat_dht = dht_addr.clone();
+            let heartbeat_peer = peer_id.clone();
+            let heartbeat_addr = actual_addr.clone();
+            let heartbeat_manager = Arc::clone(&manager);
+            let heartbeat = tokio::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+                interval.tick().await;
+                loop {
+                    interval.tick().await;
+                    if let Err(error) =
+                        join_dht(&heartbeat_dht, &heartbeat_peer, &heartbeat_addr).await
+                    {
+                        eprintln!("DHT lease refresh failed: {error}");
+                        continue;
+                    }
+                    if let Err(error) = announce_pieces(
+                        &heartbeat_dht,
+                        &heartbeat_peer,
+                        &heartbeat_addr,
+                        &heartbeat_manager,
+                    )
+                    .await
+                    {
+                        eprintln!("DHT piece refresh failed: {error}");
+                    }
+                }
+            }); 
+            let serve_result = tokio::select! {
+                result = serve_peer(listener, peer_id.clone(), manager) => result,
+                signal = tokio::signal::ctrl_c() => signal,
+            };
+            heartbeat.abort();
+            let _ = heartbeat.await;
+            let cleanup_result = remove_peer(dht_addr, peer_id).await;
+            serve_result?;
+            cleanup_result?;
         }
         Some("download") if args.len() == 7 => {
             let peer_id = &args[2];

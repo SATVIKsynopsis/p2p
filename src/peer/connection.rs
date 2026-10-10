@@ -5,9 +5,10 @@ pub struct PeerConnection {
     pub peer_id: String,
     pub bitfield: Option<Vec<u8>>,
     pub handshake_complete: bool,
-    
+
     pub remote_unchoked: bool,
-    
+    pub locally_unchoked: bool,
+
     pub uploaded_pieces: u64,
     pub downloaded_pieces: u64,
     pub successful_requests: u64,
@@ -28,7 +29,6 @@ impl PeerConnection {
         }
     }
 
-    
     pub async fn handshake(&mut self, local_peer_id: &str) -> Result<(), std::io::Error> {
         if local_peer_id.trim().is_empty() {
             return Err(std::io::Error::new(
@@ -76,7 +76,7 @@ impl PeerConnection {
         self.receive_bitfield().await
     }
 
-    /// Reads the initial uploader decision sent after bitfield exchange.
+    
     pub async fn receive_choke_state(&mut self) -> Result<(), std::io::Error> {
         match self.receive_message().await? {
             crate::protocol::Message::Choke => {
